@@ -35,16 +35,33 @@ class RpmHandler:
             self.kernel_name = 'kernel'
 
     def get_installed(self):
-        return filter(None, check_output(
-            ['rpm', '--queryformat=%{VERSION}-%{RELEASE}\n', '-qq', self.kernel_name]).split('\n'))
+        result = []
+        for version in check_output(
+            ['rpm', '--queryformat=%{VERSION}-%{RELEASE}\n', '-qq', self.kernel_name]).split('\n'):
+            version = RpmHandler.strip_version(version)
+            if version:
+                result.append(version)
+        return result
 
     def get_available(self):
         yum_output = check_output(
             ['yum', 'list', 'updates', self.kernel_name]).split('\n')
         result = []
         for line in yum_output:
-            if self.kernel_name in line:
-                result.append(line.split()[1])
+            if line.startswith(self.kernel_name):
+                result.append(RpmHandler.strip_version(line.split()[1]))
+        return result
+
+    @staticmethod
+    def strip_version(version):
+        parts = version.split('.')
+        result = parts[0]
+        parts.pop(0)
+        for part in parts:
+            if part and part[0].isdigit():
+                result += '.'+part
+            else:
+                return result
         return result
 
 
@@ -109,6 +126,7 @@ class KernelChecker:
 
         if self.distro_type == "rpm":
             handler = RpmHandler(self.current_version)
+            self.current_version = handler.strip_version(self.current_version)
         elif self.distro_type == "dpkg":
             handler = DpkgHandler(self.current_version)
             pass
@@ -152,7 +170,8 @@ class KernelChecker:
         :return: latest version from all versions
         """
         latest = '0'
-        for k in [self.current_version] + self.installed_versions + self.available_versions:
+        all = [self.current_version] + self.installed_versions + self.available_versions
+        for k in all:
             if LooseVersion(latest) < LooseVersion(k):
                 latest = k
         return latest
