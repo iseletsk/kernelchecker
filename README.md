@@ -35,6 +35,7 @@ inside_container : False
 kernelcare :
   installed : False
   up2date : False
+  supported : True
 ```
 
 * latest --> Latest available kernel
@@ -45,6 +46,21 @@ kernelcare :
 * inside_container --> if True, other values could be ignored, as we are running inside container and cannot update kernel
 * kernelcare : installed --> if True, KernelCare installed
 * kernelcare : up2date --> if True, kernel is patched with all the security patches, no need to update kernel (even if needs_update shows up)
+* kernelcare : supported --> if True, KernelCare supports this kernel, if False - KernelCare doesn't support this kernel
 
+Some example of usages / advising customer based on results:
 
-
+```
+if inside_container == True: do nothing
+// customer should not be advised to update/reboot no matter what
+// as customer doesn't have ability to do so. 
+// Also, node kernel might be patched using KernelCare or other tools.
+else if needs_update == False : customer running latest kernel, nothing needs to be done
+else if kernelcare.up2date == True: nothing needs to be done, Kernel is patched with KernelCare
+else if needs_update == False {
+  if kernelcare.installed: ask customer to run kcarectl --update
+  else if kernelcare.supported: ask customer to deploy KernelCare
+  else if latest_installed: ask customer to reboot
+  else: ask customer to update using yum update/apt-get update, and reboot_
+}
+```

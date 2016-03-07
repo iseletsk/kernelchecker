@@ -145,17 +145,42 @@ class KernelChecker:
 
         self.check_kernelcare()
 
+
+    @staticmethod
+    def get_kernel_hash():
+        try:
+            # noinspection PyCompatibility
+            from hashlib import sha1
+        except ImportError:
+            from sha import sha as sha1
+        f = open('/proc/version', 'rb')
+        try:
+            return sha1(f.read()).hexdigest()
+        finally:
+            f.close()
+
+    @staticmethod
+    def is_kernelcare_supported_kernel():
+        url = 'http://patches.kernelcare.com/'+KernelChecker.get_kernel_hash()+'/latest.v1'
+        import urllib2
+        try:
+            urllib2.urlopen(url)
+            return True
+        except:
+            return False
+
     def check_kernelcare(self):
         """
         checks if kernelcare (http://kernelcare.com) is installed, and kernel is patched
-        :return: tupple ( INSTALLED, UP2DATE)
+        :return: tupple ( INSTALLED, UP2DATE, SUPPORTED )
         """
+        supported = KernelChecker.is_kernelcare_supported_kernel()
         kcare_bin = '/usr/bin/kcarectl'
         if os.path.exists(kcare_bin):
             p = subprocess.Popen([kcare_bin, '--check'], stderr=subprocess.PIPE, stdout=subprocess.PIPE)
-            self.kernelcare = (True, p.wait() == 1)
+            self.kernelcare = (True, p.wait() == 1, supported)
         else:
-            self.kernelcare = (False, False)
+            self.kernelcare = (False, False, supported)
 
     @staticmethod
     def get_version(fullname):
@@ -208,7 +233,8 @@ class KernelChecker:
     def get_data(self):
         return (self.latest_version, self.current_version, self.distro_type,
                 self.needs_update, self.latest_installed,
-                self.latest_available, self.inside_container, self.kernelcare[0], self.kernelcare[1])
+                self.latest_available, self.inside_container,
+                self.kernelcare[0], self.kernelcare[1], self.kernelcare[2])
 
     def tojson(self):
         result = '{ "latest" : "%s", ' \
@@ -218,7 +244,7 @@ class KernelChecker:
                  '"latest_installed" : %r, ' \
                  '"latest_available" : %r, ' \
                  '"inside_container" : %r,' \
-                 '"kernelcare" : { "installed" : %r, "up2date" : %r } }' % self.get_data()
+                 '"kernelcare" : { "installed" : %r, "up2date" : %r, "supported" : %r } }' % self.get_data()
         return result
 
     def toyaml(self):
@@ -229,8 +255,10 @@ class KernelChecker:
                  'latest_installed : %r\n' \
                  'latest_available : %r\n' \
                  'inside_container : %r\n' \
-                 'kernelcare :\n    installed : %r\n    up2date : %r\n' % self.get_data()
+                 'kernelcare :\n    ' \
+                 'installed : %r\n    up2date : %r\n    supported : %r\n' % self.get_data()
         return result
+
 
 
 def main():
