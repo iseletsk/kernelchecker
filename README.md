@@ -74,9 +74,9 @@ Usage:
 python kc-compat.py [--silent|-q]
 ```
 
-Outputs COMPATIBLE if kernel supported, UNSUPPORTED otherwise.
+Outputs COMPATIBLE if kernel supported, UNSUPPORTED and UNSUPPORTED; INSIDE CONTAINER
 if --silent flag is provided -- doesn't print anything
-Produces exit code 0 if compatible, 1 otherwise
+Produces exit code 0 if compatible; 1 unsupported; 2 unsupported, inside container
 
 Alternatively you can use: 
 ```bash

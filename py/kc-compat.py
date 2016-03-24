@@ -1,5 +1,6 @@
 import urllib2
 import sys
+import os
 
 __author__ = 'Igor Seletskiy'
 __copyright__ = "Cloud Linux Zug GmbH 2016, KernelCare Project"
@@ -24,6 +25,18 @@ def get_kernel_hash():
         f.close()
 
 
+def inside_vz_container():
+    """
+    determines if we are inside Virtuozzo container
+    :return: True if inside container, false otherwise
+    """
+    return os.path.exists('/proc/vz/veinfo') and not os.path.exists('/proc/vz/version')
+
+
+def inside_lxc_container():
+    return '/lxc/' in open('/proc/1/cgroup').read()
+
+
 def is_compat():
     url = 'http://patches.kernelcare.com/'+get_kernel_hash()+'/latest.v1'
     try:
@@ -33,24 +46,27 @@ def is_compat():
         return False
 
 
+def myprint(silent, message):
+    if not silent:
+        print(message)
+
+
 def main():
     """
     if --silent or -q argument provided, don't print anything, just use exit code
     otherwise print results (COMPATIBLE or UNSUPPORTED)
     else exit with 0 if COMPATIBLE, 1 otherwise
     """
-    if len(sys.argv) > 1 and (sys.argv[1] == '--silent' or sys.argv[1] == '-q'):
-        if is_compat():
-            return 0
-        else:
-            return 1
+    silent = len(sys.argv) > 1 and (sys.argv[1] == '--silent' or sys.argv[1] == '-q')
+    if inside_vz_container() or inside_lxc_container():
+        myprint(silent, "UNSUPPORTED; INSIDE CONTAINER")
+        return 2
+    if is_compat():
+        print(silent, "COMPATIBLE")
+        return 0
     else:
-        if is_compat():
-            print("COMPATIBLE")
-            return 0
-        else:
-            print("UNSUPPORTED")
-            return 1
+        print(silent, "UNSUPPORTED")
+        return 1
 
 if __name__ == "__main__":
     main()
