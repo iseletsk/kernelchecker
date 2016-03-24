@@ -78,3 +78,15 @@ Outputs COMPATIBLE if kernel supported, UNSUPPORTED otherwise.
 if --silent flag is provided -- doesn't print anything
 Produces exit code 0 if compatible, 1 otherwise
 
+Alternatively you can use: 
+```bash
+curl -s https://raw.githubusercontent.com/iseletsk/kernelchecker/master/py/kc-compat.py|python
+```
+
+or
+```bash
+wget -qq -O - https://raw.githubusercontent.com/iseletsk/kernelchecker/master/py/kc-compat.py|python
+```
+
+_Note: You cannot use exit code in this case, only output_
+
