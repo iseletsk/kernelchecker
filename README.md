@@ -1,5 +1,6 @@
 #KernelChecker
 
+_kernelcheker.py_
 KernelChecker was created to allow control panels to easily detect & advise
 users on updating running kernel. It can be used to promote KernelCare
 through the control panel. One of the goals behind creating this script was to to make it easier for control
@@ -64,3 +65,16 @@ else if needs_update == False {
   else: ask customer to update using yum update/apt-get update, and reboot_
 }
 ```
+
+
+_kc-compat.py_
+Checks if server is running kernel compatible with KernelCare.
+Usage:
+```bash
+python kc-compat.py [--silent|-q]
+```
+
+Outputs COMPATIBLE if kernel supported, UNSUPPORTED otherwise.
+if --silent flag is provided -- doesn't print anything
+Produces exit code 0 if compatible, 1 otherwise
+
