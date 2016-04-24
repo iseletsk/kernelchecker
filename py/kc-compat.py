@@ -60,13 +60,13 @@ def main():
     silent = len(sys.argv) > 1 and (sys.argv[1] == '--silent' or sys.argv[1] == '-q')
     if inside_vz_container() or inside_lxc_container():
         myprint(silent, "UNSUPPORTED; INSIDE CONTAINER")
-        exit(2)
+        return 2
     if is_compat():
         myprint(silent, "COMPATIBLE")
-        exit(0)
+        return 0
     else:
         myprint(silent, "UNSUPPORTED")
-        exit(1)
+        return 1
 
 if __name__ == "__main__":
-    main()
+    exit(main())
