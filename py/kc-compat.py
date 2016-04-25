@@ -62,11 +62,11 @@ def main():
         myprint(silent, "UNSUPPORTED; INSIDE CONTAINER")
         return 2
     if is_compat():
-        print(silent, "COMPATIBLE")
+        myprint(silent, "COMPATIBLE")
         return 0
     else:
-        print(silent, "UNSUPPORTED")
+        myprint(silent, "UNSUPPORTED")
         return 1
 
 if __name__ == "__main__":
-    main()
+    exit(main())
