@@ -161,7 +161,7 @@ class KernelChecker:
 
     @staticmethod
     def is_kernelcare_supported_kernel():
-        url = 'http://patches.kernelcare.com/'+KernelChecker.get_kernel_hash()+'/latest.v1'
+        url = 'http://patches.kernelcare.com/'+KernelChecker.get_kernel_hash()+'/version'
         import urllib2
         try:
             urllib2.urlopen(url)
