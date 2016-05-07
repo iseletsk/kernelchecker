@@ -38,7 +38,7 @@ def inside_lxc_container():
 
 
 def is_compat():
-    url = 'http://patches.kernelcare.com/'+get_kernel_hash()+'/latest.v1'
+    url = 'http://patches.kernelcare.com/'+get_kernel_hash()+'/version'
     try:
         urllib2.urlopen(url)
         return True
