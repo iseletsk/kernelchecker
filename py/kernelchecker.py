@@ -71,6 +71,7 @@ class DpkgHandler:
         self.pkg_version = parts[0]
         self.pkg_prefix = 'linux-image-'+parts[0]
         self.pkg_suffix = parts[-1]
+        self.is_rt = '-rt-' in current_version
 
     def extract_version(self, line):
         if len(line):
@@ -85,7 +86,11 @@ class DpkgHandler:
         for line in out.split('\n'):
             ver = self.extract_version(line)
             if ver:
-                result.append(ver)
+		if self.is_rt:
+			if '-rt-' in ver: 
+                		result.append(ver)
+		elif '-rt-' not in ver:
+			result.append(ver)
         return result
 
     def get_installed(self):
