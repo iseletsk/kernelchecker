@@ -61,7 +61,9 @@ class RpmHandler:
             if part and part[0].isdigit():
                 result += '.'+part
             else:
-                return result
+                break
+        if ':' in result:
+            result = result.split(':')[1]
         return result
 
 
