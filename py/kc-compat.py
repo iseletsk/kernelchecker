@@ -1,9 +1,10 @@
+import struct
 import urllib2
 import sys
 import os
 
 __author__ = 'Igor Seletskiy'
-__copyright__ = "Cloud Linux Zug GmbH 2016, KernelCare Project"
+__copyright__ = "Copyright (c) Cloud Linux GmbH & Cloud Linux Software, Inc"
 __credits__ = 'Igor Seletskiy'
 __license__ = 'Apache License v2.0'
 __maintainer__ = 'Igor Seletskiy'
@@ -33,6 +34,38 @@ def inside_vz_container():
     return os.path.exists('/proc/vz/veinfo') and not os.path.exists('/proc/vz/version')
 
 
+def _get_last_byte_from(filename):
+    """ Reading the last byte from the varfile
+    :return: last byte in a file as unsigned int or None if file was empty
+    """
+    with open(filename, 'rb') as f:
+        try:
+            f.seek(-1, os.SEEK_END)
+        except IOError:
+            return None
+        last, = struct.unpack("B", f.read(1))
+        return last
+
+
+def is_secure_boot():
+    """ Detects Secure Boot
+    :return: True if Secure Boot is enabled, false otherwise
+    """
+    efivars_location = "/sys/firmware/efi/efivars/"
+    try:
+        for file in os.listdir(efivars_location):
+            if file.startswith('SecureBoot'):
+                varfile = os.path.join(efivars_location, file)
+                return _get_last_byte_from(varfile) == 1
+    except OSError as err:
+        # If evi folder does not exists, it's definitely means
+        # that Secure Boot not have been used
+        if err.errno == os.errno.ENOENT:
+            return False
+        raise
+    return False
+
+
 def inside_lxc_container():
     return '/lxc/' in open('/proc/1/cgroup').read()
 
@@ -55,10 +88,13 @@ def main():
     """
     if --silent or -q argument provided, don't print anything, just use exit code
     otherwise print results (COMPATIBLE or UNSUPPORTED)
-    else exit with 0 if COMPATIBLE, 1 otherwise
+    else exit with 0 if COMPATIBLE, 1 or more otherwise
     """
     silent = len(sys.argv) > 1 and (sys.argv[1] == '--silent' or sys.argv[1] == '-q')
-    if inside_vz_container() or inside_lxc_container():
+    if is_secure_boot():
+        myprint(silent, "UNSUPPORTED; SECURE BOOT")
+        return 3
+    if inside_vz_container() or inside_lxc_container() or is_secure_boot():
         myprint(silent, "UNSUPPORTED; INSIDE CONTAINER")
         return 2
     if is_compat():
