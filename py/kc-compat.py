@@ -52,17 +52,12 @@ def is_secure_boot():
     :return: True if Secure Boot is enabled, false otherwise
     """
     efivars_location = "/sys/firmware/efi/efivars/"
-    try:
-        for file in os.listdir(efivars_location):
-            if file.startswith('SecureBoot'):
-                varfile = os.path.join(efivars_location, file)
-                return _get_last_byte_from(varfile) == 1
-    except OSError as err:
-        # If evi folder does not exists, it's definitely means
-        # that Secure Boot not have been used
-        if err.errno == os.errno.ENOENT:
-            return False
-        raise
+    if not os.path.isdir(efivars_location):
+        return False
+    for filename in os.listdir(efivars_location):
+        if filename.startswith('SecureBoot'):
+            varfile = os.path.join(efivars_location, filename)
+            return _get_last_byte_from(varfile) == 1
     return False
 
 
