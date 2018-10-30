@@ -39,11 +39,7 @@ def _get_last_byte_from(filename):
     :return: last byte in a file as unsigned int or None if file was empty
     """
     with open(filename, 'rb') as f:
-        try:
-            f.seek(-1, os.SEEK_END)
-        except IOError:
-            return None
-        last, = struct.unpack("B", f.read(1))
+        last, = struct.unpack("B", f.read()[-1])
         return last
 
 
