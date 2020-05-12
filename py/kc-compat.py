@@ -1,7 +1,12 @@
+from __future__ import print_function
 import struct
-import urllib2
 import sys
 import os
+
+try:
+    from urllib.request import urlopen
+except ImportError:
+    from urllib2 import urlopen
 
 __author__ = 'Igor Seletskiy'
 __copyright__ = "Copyright (c) Cloud Linux GmbH & Cloud Linux Software, Inc"
@@ -62,11 +67,11 @@ def inside_lxc_container():
 
 
 def is_compat():
-    url = 'http://patches.kernelcare.com/'+get_kernel_hash()+'/version'
+    url = 'http://patches.kernelcare.com/' + get_kernel_hash() + '/version'
     try:
-        urllib2.urlopen(url)
+        urlopen(url)
         return True
-    except:
+    except Exception:
         return False
 
 
@@ -94,6 +99,7 @@ def main():
     else:
         myprint(silent, "UNSUPPORTED")
         return 1
+
 
 if __name__ == "__main__":
     exit(main())
