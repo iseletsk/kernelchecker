@@ -1,12 +1,10 @@
 #!/usr/bin/env python
 
-
 import os
 import json
 import errno
 import subprocess
 import tempfile
-import codecs
 import collections
 import logging
 
@@ -16,7 +14,7 @@ except ImportError:
     from urllib2 import urlopen
 
 USERSPACE_JSON = 'http://patches04.kernelcare.com/userspace.json'
-LOGLEVEL = os.environ.get('LOGLEVEL', 'INFO').upper()
+LOGLEVEL = os.environ.get('LOGLEVEL', 'ERROR').upper()
 logging.basicConfig(level=LOGLEVEL, format='%(message)s')
 
 
@@ -29,7 +27,7 @@ def suppress_permission_error(default):
                 return clbl(*args, **kwargs)
             except (IOError, OSError) as err:
                 if err.errno == errno.EPERM or err.errno == errno.EACCES:
-                    logging.debug('Permission error: {0}'.format(err))
+                    logging.warning('Permission error: {0}'.format(err))
                     return default
                 else:
                     raise
@@ -40,11 +38,15 @@ def suppress_permission_error(default):
 
 def get_build_id(filename):
     try:
-        raw = subprocess.check_output(["objcopy", filename, "/dev/null", "--dump-section", ".note.gnu.build-id=/dev/stdout"], stderr=subprocess.PIPE)
-        return codecs.getencoder('hex')(raw[16:])[0]
-    except subprocess.CalledProcessError as err:
+        raw = subprocess.check_output(["eu-readelf", "-n", str(filename)], stderr=subprocess.PIPE).decode()
+    except (subprocess.CalledProcessError, UnicodeDecodeError) as err:
         logging.warning(err)
-        pass
+        return None
+
+    for line in raw.split('\n'):
+        if line.strip().startswith("Build ID"):
+            _, _, buildid = line.partition(": ")
+            return buildid
 
 
 def get_comm(pid):
@@ -56,26 +58,31 @@ def get_comm(pid):
 @suppress_permission_error(default=None)
 def get_build_id_from_memory(pid, ranges):
     mem_filename = '/proc/{:d}/mem'.format(pid)
-    with tempfile.NamedTemporaryFile(suffix='.so') as f:
+    with tempfile.NamedTemporaryFile(suffix='.so', prefix='libcare-') as f:
         for adr, offset in ranges:
             start, end, offset = map(lambda x: int(x, 16), adr.split('-') + [offset, ])
             if not os.path.exists(mem_filename):
                 continue
             cmd = [
-                "dd", "skip={:d}".format(start),
-
+                "dd",
+                "skip={:d}".format(start),
                 # "bs={:d}".format(end - start),
                 # "count={:d}".format(1),
-
-                "bs={:d}".format(1),
+                # "bs={:d}".format(1),
+                # "ibs={:d}".format(4096),
+                # "obs={:d}".format(4096),
                 "count={:d}".format(end - start),
-
                 "seek={:d}".format(offset),
                 "if={:s}".format(mem_filename),
                 "of={:s}".format(f.name),
-                "conv=notrunc"
+                "conv=notrunc",
+                "iflag=skip_bytes,count_bytes",
+                "oflag=seek_bytes"
             ]
-            subprocess.check_call(cmd, stderr=subprocess.PIPE, stdout=subprocess.PIPE)
+            try:
+                subprocess.check_call(cmd, stderr=subprocess.PIPE, stdout=subprocess.PIPE)
+            except subprocess.CalledProcessError as err:
+                logging.warning(err)
         return get_build_id(f.name)
 
 
@@ -93,7 +100,7 @@ def parse_map_file(filename):
     with open(filename, 'r') as mapfd:
         for line in mapfd:
             adr, perm, offset, _, inode, pathname, flag = (line.split() + [None, None])[:7]
-            if flag not in ['(deleted)'] and perm.startswith('r'):
+            if flag not in ['(deleted)']:
                 data[(pathname, inode)].add((adr, offset))
     return data
 
@@ -117,9 +124,9 @@ def iter_proc_lib():
                 if os.path.isfile(pathname) and os.stat(pathname).st_ino == int(inode):
                     build_id = get_build_id(pathname)
                 else:
+                    logging.warning("Library `%s` was gathered from memory.", pathname)
                     build_id = get_build_id_from_memory(pid, ranges)
                 cache[inode] = build_id
-
             yield pid, os.path.basename(pathname), cache[inode]
 
 
@@ -129,11 +136,11 @@ def main():
     for pid, libname, build_id in iter_proc_lib():
         comm = get_comm(pid)
         logging.debug("For %s[%s] `%s` was found with buid id = %s", comm, pid, libname, build_id)
-        if libname in data and build_id and data[libname] != build_id.decode():
+        if libname in data and build_id and data[libname] != build_id:
             failed = True
-            logging.info("Process %s[%s] linked to the `%s` that is not up to date", comm, pid, libname)
+            logging.error("Process %s[%s] linked to the `%s` that is not up to date", comm, pid, libname)
     if not failed:
-        logging.info("Everything is OK.")
+        print("Everything is OK.")
 
 
 if __name__ == '__main__':
