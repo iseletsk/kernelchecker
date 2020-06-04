@@ -42,7 +42,8 @@ def get_build_id(filename):
     try:
         raw = subprocess.check_output(["objcopy", filename, "/dev/null", "--dump-section", ".note.gnu.build-id=/dev/stdout"], stderr=subprocess.PIPE)
         return codecs.getencoder('hex')(raw[16:])[0]
-    except subprocess.CalledProcessError:
+    except subprocess.CalledProcessError as err:
+        logging.warning(err)
         pass
 
 
@@ -60,11 +61,21 @@ def get_build_id_from_memory(pid, ranges):
             start, end, offset = map(lambda x: int(x, 16), adr.split('-') + [offset, ])
             if not os.path.exists(mem_filename):
                 continue
-            subprocess.call([
-                "dd", "skip={:d}".format(start), "bs={:d}".format(end - start), "seek={:d}".format(offset),
-                "if={:s}".format(mem_filename), "of={:s}".format(f.name),
-                "count=1", "status=none", "conv=notrunc"
-            ], stderr=subprocess.PIPE)
+            cmd = [
+                "dd", "skip={:d}".format(start),
+
+                # "bs={:d}".format(end - start),
+                # "count={:d}".format(1),
+
+                "bs={:d}".format(1),
+                "count={:d}".format(end - start),
+
+                "seek={:d}".format(offset),
+                "if={:s}".format(mem_filename),
+                "of={:s}".format(f.name),
+                "conv=notrunc"
+            ]
+            subprocess.check_call(cmd, stderr=subprocess.PIPE, stdout=subprocess.PIPE)
         return get_build_id(f.name)
 
 
@@ -81,8 +92,8 @@ def parse_map_file(filename):
     data = collections.defaultdict(set)
     with open(filename, 'r') as mapfd:
         for line in mapfd:
-            adr, _, offset, _, inode, pathname, flag = (line.split() + [None, None])[:7]
-            if flag not in ['(deleted)']:
+            adr, perm, offset, _, inode, pathname, flag = (line.split() + [None, None])[:7]
+            if flag not in ['(deleted)'] and perm.startswith('r'):
                 data[(pathname, inode)].add((adr, offset))
     return data
 
@@ -118,7 +129,7 @@ def main():
     for pid, libname, build_id in iter_proc_lib():
         comm = get_comm(pid)
         logging.debug("For %s[%s] `%s` was found with buid id = %s", comm, pid, libname, build_id)
-        if libname in data and build_id and data[libname] != build_id:
+        if libname in data and build_id and data[libname] != build_id.decode():
             failed = True
             logging.info("Process %s[%s] linked to the `%s` that is not up to date", comm, pid, libname)
     if not failed:
