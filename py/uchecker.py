@@ -3,10 +3,20 @@
 import os
 import json
 import errno
-import subprocess
-import tempfile
-import collections
+import struct
 import logging
+
+from collections import namedtuple
+
+ELF64_HEADER = "<16sHHIQQQIHHHHHH"
+ELF_PH_HEADER = "<IIQQQQQQ"
+ELF_NHDR = "<3I"
+PT_NOTE = 4
+NT_GNU_BUILD_ID = 3
+IGNORED_PATHNAME = ["[heap]", "[stack]", "[vdso]", "[vsyscall]", "[vvar]"]
+
+Range = namedtuple('Range', 'offset size start end')
+Map = namedtuple('Map', 'addr perm offset dev inode pathname flag')
 
 try:
     from urllib.request import urlopen
@@ -18,7 +28,7 @@ LOGLEVEL = os.environ.get('LOGLEVEL', 'ERROR').upper()
 logging.basicConfig(level=LOGLEVEL, format='%(message)s')
 
 
-def suppress_permission_error(default):
+def suppress_permission_error(default=None):
 
     def wrapper2(clbl):
 
@@ -36,54 +46,102 @@ def suppress_permission_error(default):
     return wrapper2
 
 
-def get_build_id(filename):
-    try:
-        raw = subprocess.check_output(["eu-readelf", "-n", str(filename)], stderr=subprocess.PIPE).decode()
-    except (subprocess.CalledProcessError, UnicodeDecodeError) as err:
-        logging.warning(err)
-        return None
+@suppress_permission_error()
+def get_build_id(fileobj):
+    header = fileobj.read(struct.calcsize(ELF64_HEADER))
+    hdr = struct.unpack(ELF64_HEADER, header)
+    (e_ident, e_type, e_machine, e_version, e_entry, e_phoff,
+     e_shoff, e_flags, e_ehsize, e_phentsize, e_phnum,
+     e_shentsize, e_shnum, e_shstrndx) = hdr
+    if not e_ident.startswith(b'\x7fELF\x02\x01') or not e_phoff:
+        return
+    fileobj.seek(e_phoff)
+    for idx in range(e_phnum):
+        ph = fileobj.read(e_phentsize)
+        (p_type, p_flags, p_offset, p_vaddr, p_paddr,
+         p_filesz, p_memsz, p_align) = struct.unpack(ELF_PH_HEADER, ph)
+        p_end = p_offset + p_filesz
+        if p_type == PT_NOTE:
+            fileobj.seek(p_offset)
+            n_type = None
+            while n_type != NT_GNU_BUILD_ID and fileobj.tell() <= p_end:
+                nhdr = fileobj.read(struct.calcsize(ELF_NHDR))
+                n_namesz, n_descsz, n_type = struct.unpack(ELF_NHDR, nhdr)
+                fileobj.read(n_namesz)
+                desc = fileobj.read(n_descsz)
+            if n_type is not None:
+                return desc.hex()
 
-    for line in raw.split('\n'):
-        if line.strip().startswith("Build ID"):
-            _, _, buildid = line.partition(": ")
-            return buildid
+
+def iter_maps(pid):
+    with open('/proc/{:d}/maps'.format(pid), 'r') as mapfd:
+        for line in mapfd:
+            data = (line.split() + [None, None])[:7]
+            yield Map(*data)
+
+
+def get_ranges(pid, inode):
+    result = []
+    for mmap in iter_maps(pid):
+        if mmap.inode == inode:
+            start, _, end = mmap.addr.partition('-')
+            offset, start, end = map(lambda x: int(x, 16), [mmap.offset, start, end])
+            rng = Range(offset, end - start, start, end)
+            result.append(rng)
+    return result
+
+
+def get_process_files(pid):
+    result = set()
+    for mmap in iter_maps(pid):
+        if mmap.pathname and mmap.flag not in ['(deleted)'] and mmap.pathname not in IGNORED_PATHNAME and not mmap.pathname.startswith('anon_inode:'):
+            result.add((mmap.pathname, mmap.inode))
+    return result
+
+
+class FileMMapped(object):
+
+    def __init__(self, pid, inode):
+        self.fileobj = open('/proc/{:d}/mem'.format(pid), 'rb')
+        self.ranges = get_ranges(pid, inode)
+        self.pos = 0
+        self.fileobj.seek(self._get_range(0).start)
+
+    def _get_range(self, offset):
+        for rng in self.ranges:
+            if rng.offset <= offset < rng.offset + rng.size:
+                return rng
+        raise ValueError("Offset {0} is not in ranges {1}".format(offset, self.ranges))
+
+    def tell(self):
+        return self.pos
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, type, value, traceback):
+        self.fileobj.close()
+
+    def close(self):
+        self.fileobj.close()
+
+    def seek(self, offset, whence=0):
+        rng = self._get_range(offset)
+        addr = rng.start + (offset - rng.offset)
+        self.fileobj.seek(addr, whence)
+        self.pos = offset
+
+    def read(self, size):
+        return self.fileobj.read(size)
+
+
+open_mmapped = FileMMapped
 
 
 def get_comm(pid):
     comm_filename = '/proc/{:d}/comm'.format(pid)
     with open(comm_filename, 'r') as fd:
         return fd.read().strip()
-
-
-@suppress_permission_error(default=None)
-def get_build_id_from_memory(pid, ranges):
-    mem_filename = '/proc/{:d}/mem'.format(pid)
-    with tempfile.NamedTemporaryFile(suffix='.so', prefix='libcare-') as f:
-        for adr, offset in ranges:
-            start, end, offset = map(lambda x: int(x, 16), adr.split('-') + [offset, ])
-            if not os.path.exists(mem_filename):
-                continue
-            cmd = [
-                "dd",
-                "skip={:d}".format(start),
-                # "bs={:d}".format(end - start),
-                # "count={:d}".format(1),
-                # "bs={:d}".format(1),
-                # "ibs={:d}".format(4096),
-                # "obs={:d}".format(4096),
-                "count={:d}".format(end - start),
-                "seek={:d}".format(offset),
-                "if={:s}".format(mem_filename),
-                "of={:s}".format(f.name),
-                "conv=notrunc",
-                "iflag=skip_bytes,count_bytes",
-                "oflag=seek_bytes"
-            ]
-            try:
-                subprocess.check_call(cmd, stderr=subprocess.PIPE, stdout=subprocess.PIPE)
-            except subprocess.CalledProcessError as err:
-                logging.warning(err)
-        return get_build_id(f.name)
 
 
 def iter_pids():
@@ -94,40 +152,31 @@ def iter_pids():
             pass
 
 
-@suppress_permission_error(default={})
-def parse_map_file(filename):
-    data = collections.defaultdict(set)
-    with open(filename, 'r') as mapfd:
-        for line in mapfd:
-            adr, perm, offset, _, inode, pathname, flag = (line.split() + [None, None])[:7]
-            if flag not in ['(deleted)']:
-                data[(pathname, inode)].add((adr, offset))
-    return data
-
-
 def iter_proc_map():
     for pid in iter_pids():
-        maps_filename = '/proc/{:d}/maps'.format(pid)
-        if not os.path.exists(maps_filename):
-            continue
-        data = parse_map_file(maps_filename)
-        for pathname, inode in data:
-            yield pid, inode, pathname, data[(pathname, inode)]
+        for pathname, inode in get_process_files(pid):
+            yield pid, inode, pathname
 
 
 def iter_proc_lib():
     cache = {}
-    for pid, inode, pathname, ranges in iter_proc_map():
-        if pathname and pathname not in ["[heap]", "[stack]", "[vdso]", "[vsyscall]"] and pathname.endswith('.so'):
-            if inode not in cache:
-                # If mapped file exists and has the same inode
-                if os.path.isfile(pathname) and os.stat(pathname).st_ino == int(inode):
-                    build_id = get_build_id(pathname)
-                else:
-                    logging.warning("Library `%s` was gathered from memory.", pathname)
-                    build_id = get_build_id_from_memory(pid, ranges)
-                cache[inode] = build_id
-            yield pid, os.path.basename(pathname), cache[inode]
+    for pid, inode, pathname in iter_proc_map():
+        if inode not in cache:
+            # If mapped file exists and has the same inode
+            if os.path.isfile(pathname) and os.stat(pathname).st_ino == int(inode):
+                fileobj = open(pathname, 'rb')
+            else:
+                logging.warning("Library `%s` was gathered from memory.", pathname)
+                fileobj = open_mmapped(pid, inode)
+
+            try:
+                cache[inode] = get_build_id(fileobj)
+            finally:
+                fileobj.close()
+
+        build_id = cache[inode]
+        logging.debug("BuildID of `%s` is `%s`", pathname, build_id)
+        yield pid, os.path.basename(pathname), build_id
 
 
 def main():
@@ -135,10 +184,12 @@ def main():
     failed = False
     for pid, libname, build_id in iter_proc_lib():
         comm = get_comm(pid)
-        logging.debug("For %s[%s] `%s` was found with buid id = %s", comm, pid, libname, build_id)
+        logging.debug("For %s[%s] `%s` was found with buid id = %s",
+                      comm, pid, libname, build_id)
         if libname in data and build_id and data[libname] != build_id:
             failed = True
-            logging.error("Process %s[%s] linked to the `%s` that is not up to date", comm, pid, libname)
+            logging.error("Process %s[%s] linked to the `%s` that is not up to date",
+                          comm, pid, libname)
     if not failed:
         print("Everything is OK.")
 
