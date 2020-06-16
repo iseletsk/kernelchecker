@@ -77,9 +77,9 @@ def get_build_id(fileobj):
                 nhdr = fileobj.read(struct.calcsize(ELF_NHDR))
                 n_namesz, n_descsz, n_type = struct.unpack(ELF_NHDR, nhdr)
                 fileobj.read(n_namesz)
-                desc = fileobj.read(n_descsz)
+                desc = struct.unpack("<{0}B".format(n_descsz), fileobj.read(n_descsz))
             if n_type is not None:
-                return desc.hex()
+                return ''.join('{:02x}'.format(x) for x in desc)
 
 
 def iter_maps(pid):
