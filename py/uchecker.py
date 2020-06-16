@@ -48,13 +48,22 @@ def suppress_permission_error(default=None):
 
 @suppress_permission_error()
 def get_build_id(fileobj):
-    header = fileobj.read(struct.calcsize(ELF64_HEADER))
-    hdr = struct.unpack(ELF64_HEADER, header)
+
+    try:
+        header = fileobj.read(struct.calcsize(ELF64_HEADER))
+        hdr = struct.unpack(ELF64_HEADER, header)
+    except struct.error:
+        # Can't read a header
+        return
+
     (e_ident, e_type, e_machine, e_version, e_entry, e_phoff,
      e_shoff, e_flags, e_ehsize, e_phentsize, e_phnum,
      e_shentsize, e_shnum, e_shstrndx) = hdr
+
+    # No program headers or not an ELF file
     if not e_ident.startswith(b'\x7fELF\x02\x01') or not e_phoff:
         return
+
     fileobj.seek(e_phoff)
     for idx in range(e_phnum):
         ph = fileobj.read(e_phentsize)
@@ -94,7 +103,7 @@ def get_ranges(pid, inode):
 def get_process_files(pid):
     result = set()
     for mmap in iter_maps(pid):
-        if mmap.pathname and mmap.flag not in ['(deleted)'] and mmap.pathname not in IGNORED_PATHNAME and not mmap.pathname.startswith('anon_inode:'):
+        if mmap.pathname and mmap.flag not in ['(deleted)'] and mmap.pathname not in IGNORED_PATHNAME and not mmap.pathname.startswith('anon_inode:') and not mmap.pathname.startswith('/dev/'):
             result.add((mmap.pathname, mmap.inode))
     return result
 
@@ -132,7 +141,9 @@ class FileMMapped(object):
         self.pos = offset
 
     def read(self, size):
-        return self.fileobj.read(size)
+        result = self.fileobj.read(size)
+        self.pos += size
+        return result
 
 
 open_mmapped = FileMMapped
@@ -165,9 +176,10 @@ def iter_proc_lib():
             # If mapped file exists and has the same inode
             if os.path.isfile(pathname) and os.stat(pathname).st_ino == int(inode):
                 fileobj = open(pathname, 'rb')
+            # If file exists only as a mapped to the mempory
             else:
-                logging.warning("Library `%s` was gathered from memory.", pathname)
                 fileobj = open_mmapped(pid, inode)
+                logging.warning("Library `%s` was gathered from memory.", pathname)
 
             try:
                 cache[inode] = get_build_id(fileobj)
@@ -175,7 +187,6 @@ def iter_proc_lib():
                 fileobj.close()
 
         build_id = cache[inode]
-        logging.debug("BuildID of `%s` is `%s`", pathname, build_id)
         yield pid, os.path.basename(pathname), build_id
 
 
