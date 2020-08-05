@@ -15,7 +15,7 @@ PT_NOTE = 4
 NT_GNU_BUILD_ID = 3
 IGNORED_PATHNAME = ["[heap]", "[stack]", "[vdso]", "[vsyscall]", "[vvar]"]
 
-Range = namedtuple('Range', 'offset size start end')
+Vma = namedtuple('Vma', 'offset size start end')
 Map = namedtuple('Map', 'addr perm offset dev inode pathname flag')
 
 try:
@@ -89,21 +89,28 @@ def iter_maps(pid):
             yield Map(*data)
 
 
-def get_ranges(pid, inode):
+def get_vmas(pid, inode):
     result = []
     for mmap in iter_maps(pid):
         if mmap.inode == inode:
             start, _, end = mmap.addr.partition('-')
             offset, start, end = map(lambda x: int(x, 16), [mmap.offset, start, end])
-            rng = Range(offset, end - start, start, end)
+            rng = Vma(offset, end - start, start, end)
             result.append(rng)
     return result
+
+
+def is_valid_file_mmap(mmap):
+    return mmap.pathname and mmap.flag not in ['(deleted)']  \
+        and mmap.pathname not in IGNORED_PATHNAME \
+        and not mmap.pathname.startswith('anon_inode:') \
+        and not mmap.pathname.startswith('/dev/')
 
 
 def get_process_files(pid):
     result = set()
     for mmap in iter_maps(pid):
-        if mmap.pathname and mmap.flag not in ['(deleted)'] and mmap.pathname not in IGNORED_PATHNAME and not mmap.pathname.startswith('anon_inode:') and not mmap.pathname.startswith('/dev/'):
+        if is_valid_file_mmap(mmap):
             result.add((mmap.pathname, mmap.inode))
     return result
 
@@ -112,15 +119,15 @@ class FileMMapped(object):
 
     def __init__(self, pid, inode):
         self.fileobj = open('/proc/{:d}/mem'.format(pid), 'rb')
-        self.ranges = get_ranges(pid, inode)
+        self.vmas = get_vmas(pid, inode)
         self.pos = 0
-        self.fileobj.seek(self._get_range(0).start)
+        self.fileobj.seek(self._get_vma(0).start)
 
-    def _get_range(self, offset):
-        for rng in self.ranges:
+    def _get_vma(self, offset):
+        for rng in self.vmas:
             if rng.offset <= offset < rng.offset + rng.size:
                 return rng
-        raise ValueError("Offset {0} is not in ranges {1}".format(offset, self.ranges))
+        raise ValueError("Offset {0} is not in ranges {1}".format(offset, self.vmas))
 
     def tell(self):
         return self.pos
@@ -135,14 +142,14 @@ class FileMMapped(object):
         self.fileobj.close()
 
     def seek(self, offset, whence=0):
-        rng = self._get_range(offset)
+        rng = self._get_vma(offset)
         addr = rng.start + (offset - rng.offset)
         self.fileobj.seek(addr, whence)
         self.pos = offset
 
     def read(self, size):
         result = self.fileobj.read(size)
-        self.pos += size
+        self.pos += len(result)
         return result
 
 
