@@ -1,5 +1,32 @@
 #!/usr/bin/env python
 
+""" Detect outdated shared libraries.
+
+Detect and report not up-to-date shared libraries that used by running
+processes. Detection based on BuildID comparison and aware of deleted or
+replaced files.
+
+This program is free software: you can redistribute it and/or modify it under
+the terms of the GNU General Public License as published by the Free Software
+Foundation, either version 3 of the License, or (at your option) any later
+version.
+
+This program is distributed in the hope that it will be useful, but WITHOUT
+ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License along with
+this program. If not, see <http://www.gnu.org/licenses/>.
+"""
+
+__author__ = 'Rinat Sabitov'
+__copyright__ = "Copyright (c) Cloud Linux GmbH & Cloud Linux Software, Inc"
+__license__ = "GPLv2"
+__maintainer__ = 'Rinat Sabitov'
+__email__ = 'rsabitov@cloudlinux.com'
+__status__ = 'Beta'
+__version__ = '0.1'
+
 import os
 import json
 import errno
@@ -233,10 +260,14 @@ def main():
                       comm, pid, libname, build_id)
         if libname in data and build_id and data[libname] != build_id:
             failed = True
-            logging.error("Process %s[%s] linked to the `%s` that is not up to date",
+            logging.error("Process %s[%d] linked to the `%s` that is not up to date.",
                           comm, pid, libname)
-    if not failed:
+    if failed:
         print("Everything is OK.")
+    else:
+        print("You may want to update libraries above and restart corresponding processes.\n\n"
+               "KernelCare+ allows to resolve these issues with no process downtime. "
+               "https://lp.kernelcare.com/kernelcare-early-access?")
 
 
 if __name__ == '__main__':
