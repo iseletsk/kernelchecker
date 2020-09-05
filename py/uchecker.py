@@ -28,6 +28,10 @@ LOGLEVEL = os.environ.get('LOGLEVEL', 'ERROR').upper()
 logging.basicConfig(level=LOGLEVEL, format='%(message)s')
 
 
+class BuildIDParsingException(Exception):
+    pass
+
+
 def suppress_permission_error(default=None):
 
     def wrapper2(clbl):
@@ -46,40 +50,59 @@ def suppress_permission_error(default=None):
     return wrapper2
 
 
-@suppress_permission_error()
+#@suppress_permission_error()
 def get_build_id(fileobj):
 
     try:
         header = fileobj.read(struct.calcsize(ELF64_HEADER))
         hdr = struct.unpack(ELF64_HEADER, header)
     except struct.error:
-        # Can't read a header
+        # Cant't read ELF header
         return
 
     (e_ident, e_type, e_machine, e_version, e_entry, e_phoff,
      e_shoff, e_flags, e_ehsize, e_phentsize, e_phnum,
      e_shentsize, e_shnum, e_shstrndx) = hdr
 
-    # No program headers or not an ELF file
-    if not e_ident.startswith(b'\x7fELF\x02\x01') or not e_phoff:
+
+    # Not an ELF file
+    if not e_ident.startswith(b'\x7fELF\x02\x01'):
         return
+
+    # No program headers
+    if not e_phoff:
+        raise BuildIDParsingException("Program headers not found.")
+
+    logging.debug("e_phoff: %d, e_phnum: %d, e_phentsize: %d", e_phoff, e_phnum, e_phentsize)
 
     fileobj.seek(e_phoff)
     for idx in range(e_phnum):
         ph = fileobj.read(e_phentsize)
         (p_type, p_flags, p_offset, p_vaddr, p_paddr,
          p_filesz, p_memsz, p_align) = struct.unpack(ELF_PH_HEADER, ph)
-        p_end = p_offset + p_filesz
+        logging.debug("p_idx: %d, p_type: %d", idx, p_type)
         if p_type == PT_NOTE:
+            logging.debug("p_offset: %d, p_filesz: %d", p_offset, p_filesz)
+            p_end = p_offset + p_filesz
             fileobj.seek(p_offset)
             n_type = None
             while n_type != NT_GNU_BUILD_ID and fileobj.tell() <= p_end:
                 nhdr = fileobj.read(struct.calcsize(ELF_NHDR))
                 n_namesz, n_descsz, n_type = struct.unpack(ELF_NHDR, nhdr)
+
+                # 4-byte align
+                if n_namesz % 4:
+                    n_namesz = ((n_namesz // 4) + 1) * 4
+                if n_descsz % 4:
+                    n_descsz = ((n_descsz // 4) + 1) * 4
+
+                logging.debug("n_type: %d, n_namesz: %d, n_descsz: %d)", n_type, n_namesz, n_descsz)
                 fileobj.read(n_namesz)
                 desc = struct.unpack("<{0}B".format(n_descsz), fileobj.read(n_descsz))
             if n_type is not None:
                 return ''.join('{:02x}'.format(x) for x in desc)
+    # Nothing was found
+    raise BuildIDParsingException("Program header PT_NOTE with NT_GNU_BUILD_ID was not found.")
 
 
 def iter_maps(pid):
@@ -180,19 +203,23 @@ def iter_proc_lib():
     cache = {}
     for pid, inode, pathname in iter_proc_map():
         if inode not in cache:
+            logging.debug("path: %s", pathname)
             # If mapped file exists and has the same inode
             if os.path.isfile(pathname) and os.stat(pathname).st_ino == int(inode):
                 fileobj = open(pathname, 'rb')
-            # If file exists only as a mapped to the mempory
+            # If file exists only as a mapped to the memory
             else:
                 fileobj = open_mmapped(pid, inode)
                 logging.warning("Library `%s` was gathered from memory.", pathname)
 
             try:
                 cache[inode] = get_build_id(fileobj)
+            except Exception as err:
+                logging.error("Cat't read buildID from {0}: {1}".format(pathname, err))
+                cache[inode] = None
+                raise
             finally:
                 fileobj.close()
-
         build_id = cache[inode]
         yield pid, os.path.basename(pathname), build_id
 
@@ -202,7 +229,7 @@ def main():
     failed = False
     for pid, libname, build_id in iter_proc_lib():
         comm = get_comm(pid)
-        logging.debug("For %s[%s] `%s` was found with buid id = %s",
+        logging.info("For %s[%s] `%s` was found with buid id = %s",
                       comm, pid, libname, build_id)
         if libname in data and build_id and data[libname] != build_id:
             failed = True
