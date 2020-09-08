@@ -8,7 +8,7 @@ replaced files.
 
 This program is free software: you can redistribute it and/or modify it under
 the terms of the GNU General Public License as published by the Free Software
-Foundation, either version 3 of the License, or (at your option) any later
+Foundation, either version 2 of the License, or (at your option) any later
 version.
 
 This program is distributed in the hope that it will be useful, but WITHOUT
@@ -29,7 +29,6 @@ __version__ = '0.1'
 
 import os
 import json
-import errno
 import struct
 import logging
 
@@ -55,46 +54,30 @@ LOGLEVEL = os.environ.get('LOGLEVEL', 'ERROR').upper()
 logging.basicConfig(level=LOGLEVEL, format='%(message)s')
 
 
+class NotAnELFException(Exception):
+    pass
+
+
 class BuildIDParsingException(Exception):
     pass
 
 
-def suppress_permission_error(default=None):
-
-    def wrapper2(clbl):
-
-        def wrapper(*args, **kwargs):
-            try:
-                return clbl(*args, **kwargs)
-            except (IOError, OSError) as err:
-                if err.errno == errno.EPERM or err.errno == errno.EACCES:
-                    logging.warning('Permission error: {0}'.format(err))
-                    return default
-                else:
-                    raise
-        return wrapper
-
-    return wrapper2
-
-
-#@suppress_permission_error()
 def get_build_id(fileobj):
 
     try:
         header = fileobj.read(struct.calcsize(ELF64_HEADER))
         hdr = struct.unpack(ELF64_HEADER, header)
-    except struct.error:
+    except struct.error as err:
         # Cant't read ELF header
-        return
+        raise NotAnELFException("Can't read header: {0}".format(err))
 
     (e_ident, e_type, e_machine, e_version, e_entry, e_phoff,
      e_shoff, e_flags, e_ehsize, e_phentsize, e_phnum,
      e_shentsize, e_shnum, e_shstrndx) = hdr
 
-
     # Not an ELF file
     if not e_ident.startswith(b'\x7fELF\x02\x01'):
-        return
+        raise NotAnELFException("Wrong header")
 
     # No program headers
     if not e_phoff:
@@ -241,14 +224,20 @@ def iter_proc_lib():
 
             try:
                 cache[inode] = get_build_id(fileobj)
+            except NotAnELFException as err:
+                logging.debug("Cat't read buildID from {0}: {1}".format(pathname, err))
+                cache[inode] = None
             except Exception as err:
                 logging.error("Cat't read buildID from {0}: {1}".format(pathname, err))
                 cache[inode] = None
-                raise
             finally:
                 fileobj.close()
         build_id = cache[inode]
         yield pid, os.path.basename(pathname), build_id
+
+
+def is_kcplus_handled(build_id):
+    return True
 
 
 def main():
@@ -257,17 +246,23 @@ def main():
     for pid, libname, build_id in iter_proc_lib():
         comm = get_comm(pid)
         logging.info("For %s[%s] `%s` was found with buid id = %s",
-                      comm, pid, libname, build_id)
-        if libname in data and build_id and data[libname] != build_id:
+                     comm, pid, libname, build_id)
+        if libname in data and build_id and build_id not in data[libname]:
             failed = True
-            logging.error("Process %s[%d] linked to the `%s` that is not up to date.",
-                          comm, pid, libname)
-    if failed:
+            logging.error(
+                "[%s] Process %s[%d] linked to the `%s` that is not up to date.",
+                "*" if is_kcplus_handled(build_id) else " ",
+                comm,
+                pid,
+                libname
+            )
+
+    if not failed:
         print("Everything is OK.")
     else:
-        print("You may want to update libraries above and restart corresponding processes.\n\n"
-               "KernelCare+ allows to resolve these issues with no process downtime. "
-               "https://lp.kernelcare.com/kernelcare-early-access?")
+        print("\nYou may want to update libraries above and restart corresponding processes.\n\n"
+              "KernelCare+ allows to resolve such issues with no process downtime. "
+              "To find out more, please, visit https://lp.kernelcare.com/kernelcare-early-access?")
 
 
 if __name__ == '__main__':
